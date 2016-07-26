@@ -1,0 +1,2 @@
+defmodule WsClient do
+end
