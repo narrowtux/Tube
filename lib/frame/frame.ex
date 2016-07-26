@@ -51,8 +51,10 @@ defmodule WsClient.Frame do
                payload
              end
 
+             fin = fin == 1
+
              case {fin, control_frame?, len} do
-               {true, true, _} -> {:error, :invalid_header}
+               {false, true, _} -> {:error, :invalid_header}
                {_, true, len} when len >= 126 -> {:error, :invalid_header}
                {_, _, _} ->
                  {:ok, %__MODULE__{
@@ -69,7 +71,8 @@ defmodule WsClient.Frame do
              {:error, :not_enough_payload} # this means that the next tcp frame will have more payload
          end
      _ ->
-       {:error, :invalid_header} #this means that the payload is actually part of an older message
+      IO.inspect(binary)
+      {:error, :invalid_header} #this means that the payload is actually part of an older message
      end
   end
 

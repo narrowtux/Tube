@@ -1,7 +1,7 @@
 defmodule WsClient.Websocket do
   alias WsClient.Http.{Request, Response}
+  alias WsClient.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame}
   alias WsClient.Frame
-  alias WsClient.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame}
   use GenServer
 
   @challenge_token "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -10,7 +10,8 @@ defmodule WsClient.Websocket do
             challenge_key: nil, frame_types: %{},
             initiated_close: false, opts: [],
             next_ping_timer: nil, timeout_timer: nil,
-            parent: nil, old_tcp_data: ""
+            parent: nil, old_tcp_data: "",
+            incomplete_frame: nil
 
   defmodule Validation do
     defstruct errors: [], valid?: true
@@ -23,7 +24,7 @@ defmodule WsClient.Websocket do
   end
 
   def init([uri: uri, opts: opts]) do
-    frame_types = [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame]
+    frame_types = [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame]
     |> Enum.map(fn (type) -> {type.opcode, type} end)
     |> Enum.into(%{})
     {:ok, %__MODULE__{uri: URI.parse(uri), state: :closed, frame_types: frame_types, opts: opts, parent: Keyword.get(opts, :parent)}}
@@ -78,7 +79,7 @@ defmodule WsClient.Websocket do
   end
 
   # Handshake response handling
-  def handle_info({:tcp, _port, msg}, %__MODULE__{state: :handshake, challenge_key: challenge_key, parent: parent} = state) do
+  def handle_info({:tcp, _port, msg}, %__MODULE__{state: :handshake, challenge_key: challenge_key, parent: parent} = state) when msg != "" do
     msg = msg |> Response.parse
     state = case msg do
       {%Response{
@@ -95,9 +96,9 @@ defmodule WsClient.Websocket do
         if (validation.valid?) do
           send parent, {:websocket, :open}
           if byte_size(rest) > 0 do
-            send self, {:tcp, nil, rest}
+            state = handle_frame_msg(rest, state)
           end
-          Map.put(state, :state, :open)
+          %{state | state: :open}
         else
           IO.warn "Response not valid: #{inspect validation.errors}"
           close self
@@ -148,6 +149,7 @@ defmodule WsClient.Websocket do
   end
 
   def fail(pid, reason \\ "") do
+    IO.puts "! ! ! Failing, because: #{reason}"
     close_frame = %CloseFrame{
       status_code: 1002,
       reason: reason
@@ -167,7 +169,7 @@ defmodule WsClient.Websocket do
     :ok = :gen_tcp.send(socket, bin)
   end
 
-  def send_frame(%{__struct__: type} = frame, socket) when type in [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame] do
+  def send_frame(%{__struct__: type} = frame, socket) when type in [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame] do
     frame
     |> type.to_frame
     |> send_frame(socket)
@@ -201,46 +203,105 @@ defmodule WsClient.Websocket do
     {:noreply, st}
   end
 
-  def handle_info(:force_close, state) do
+  def handle_info(:force_close, %__MODULE__{socket: nil} = state), do: {:noreply, state}
+
+  def handle_info(:force_close, %__MODULE__{socket: socket} = state) do
     :gen_tcp.close(state.socket)
 
     state = clean_state(state)
     {:noreply, state}
   end
 
-  def handle_info({:tcp, port, msg}, %__MODULE__{state: ws_state, frame_types: frame_types, parent: parent, old_tcp_data: previous_msg} = state) when ws_state in [:open, :closing] do
+  def handle_frame_msg(msg, %__MODULE__{state: ws_state, frame_types: frame_types, parent: parent, old_tcp_data: previous_msg} = state) do
     msg = previous_msg <> msg
-    case Frame.parse(msg) do
-      {:ok, frame, rest} ->
-        parsed_frame = case Map.get(frame_types, frame.opcode) do
-          nil ->
-            fail self, "invalid opcode"
-            nil
-          frame_type ->
-            frame_type.parse(frame.payload)
-        end
-        state = if parsed_frame do
-          WsClient.FrameHandler.handle_frame(parsed_frame, state)
-        else
-          state
-        end
-        state = if byte_size(rest) >= 2 do
-          send self, {:tcp, port, rest}
-          %{state | old_tcp_data: ""}
-        else
-          %{state | old_tcp_data: rest}
-        end
+    if byte_size(msg) >= 2 do
+      case Frame.parse(msg) do
+        {:ok, frame, rest} ->
+          parsed_frame = case Map.get(frame_types, frame.opcode) do
+            nil ->
+              fail self, "Unknown opcode"
+              nil
+            frame_type ->
+              frame_type.parse(frame.payload)
+          end
+          state = if parsed_frame do
+            {state, parsed_frame} = case {parsed_frame, frame, state.incomplete_frame} do
+              {%ContinuationFrame{}, frame, nil} ->
+                #IO.inspect frame
+                fail self, "Got continuation frame without prior frame"
+                {state, nil}
+              {%ContinuationFrame{}, %{fin: false}, incomplete} ->
+                #IO.puts "Got continued fragmented frame"
+                incomplete = incomplete
+                |> incomplete.__struct__.merge(parsed_frame)
+                state = %{state | incomplete_frame: incomplete}
+                {state, nil}
+              {%ContinuationFrame{}, %{fin: true}, incomplete} ->
+                #IO.puts "Got last fragmented frame"
+                state = %{state | incomplete_frame: nil}
+                parsed_frame = incomplete.__struct__.merge(incomplete, parsed_frame)
+                {state, parsed_frame}
+              {parsed_frame, %{fin: false}, nil} ->
+                #IO.puts "Got first fragmented frame"
+                state = %{state | incomplete_frame: parsed_frame}
+                {state, nil}
+              {_, %{fin: true, control_frame?: false}, incomplete} when incomplete != nil ->
+                fail self, "Got new frame before old incomplete frame was completed"
+                {state, nil}
+              {_, _, _} ->
+                #IO.puts "Got normal frame"
+                {state, parsed_frame}
+            end
+            if parsed_frame do
+              valid? = if parsed_frame.__struct__ == TextFrame do
+                case TextFrame.validate(parsed_frame) do
+                  :ok -> true
+                  {:error, error} ->
+                    fail self, error
+                    false
+                end
+              else
+                true
+              end
+              if valid? do
+                send parent, {:websocket, :frame, parsed_frame}
+                WsClient.FrameHandler.handle_frame(parsed_frame, state)
+              else
+                state
+              end
+            else
+              state
+            end
+          else
+            state
+          end
+          state = if byte_size(rest) >= 2 do
+            handle_frame_msg(rest, state)
+          else
+            %{state | old_tcp_data: rest}
+          end
 
-        send parent, {:websocket, :frame, parsed_frame}
-        {:noreply, state}
-      {:error, error} when error in [:incomplete_header, :not_enough_payload] ->
-        state = %{state | old_tcp_data: msg}
-        {:noreply, state}
-      {:error, :invalid_header} ->
-        fail self, "Invalid header"
-        {:noreply, state}
+          state
+        {:error, error} when error in [:incomplete_header, :not_enough_payload] ->
+          state = %{state | old_tcp_data: msg}
+          state
+        {:error, :invalid_header} ->
+          fail self, "Invalid header"
+          state
+      end
+    else
+      # save for later
+      state = %{state | old_tcp_data: msg}
+      state
     end
   end
+
+
+  def handle_info({:tcp, port, msg}, %__MODULE__{state: ws_state, frame_types: frame_types, parent: parent, old_tcp_data: previous_msg} = state) when ws_state in [:open, :closing] do
+    {:noreply, handle_frame_msg(msg, state)}
+  end
+
+  def handle_info({:tcp, _port, ""}, state), do: {:noreply, state}
 
   def handle_cast(:schedule_ping, %__MODULE__{next_ping_timer: timer, opts: opts}) do
 
@@ -252,7 +313,8 @@ defmodule WsClient.Websocket do
       :socket,
       :challenge_key,
       :initiated_close,
-      :old_tcp_data
+      :old_tcp_data,
+      :incomplete_frame
     ]))
   end
 

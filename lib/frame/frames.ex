@@ -1,13 +1,39 @@
 alias WsClient.Frame
 
-defmodule WsClient.Frame.FrameType do
+defmodule WsClient.Frame.ControlFrame do
    @callback parse(payload :: bitstring) :: map
    @callback to_frame(frame_type :: map) :: %Frame{}
    @callback opcode() :: integer
 end
 
+defmodule WsClient.Frame.ApplicationFrame do
+  @callback parse(payload :: bitstring) :: map
+  @callback to_frame(frame_type :: map) :: %Frame{}
+  @callback opcode() :: integer
+  @callback merge(frame :: map, continued :: map) :: map
+  @callback validate(frame :: map) :: :ok | {:error, reason :: string}
+end
+
+defmodule WsClient.Frame.ContinuationFrame do
+  @behaviour WsClient.Frame.ControlFrame
+
+  defstruct data: ""
+
+  def opcode, do: 0x0
+
+  def parse(data), do: %__MODULE__{data: data}
+
+  def to_frame(%__MODULE__{data: data}) do
+    %Frame{
+      opcode: opcode,
+      payload: data,
+      fin: true
+    }
+  end
+end
+
 defmodule WsClient.Frame.PingFrame do
-  @behaviour WsClient.Frame.FrameType
+  @behaviour WsClient.Frame.ControlFrame
 
   defstruct [application_data: ""]
 
@@ -27,7 +53,7 @@ defmodule WsClient.Frame.PingFrame do
 end
 
 defmodule WsClient.Frame.PongFrame do
-  @behaviour WsClient.Frame.FrameType
+  @behaviour WsClient.Frame.ControlFrame
 
   defstruct [application_data: ""]
 
@@ -47,7 +73,7 @@ defmodule WsClient.Frame.PongFrame do
 end
 
 defmodule WsClient.Frame.CloseFrame do
-  @behaviour WsClient.Frame.FrameType
+  @behaviour WsClient.Frame.ControlFrame
 
   defstruct [status_code: 1000, reason: ""]
 
@@ -76,7 +102,7 @@ defmodule WsClient.Frame.CloseFrame do
 end
 
 defmodule WsClient.Frame.TextFrame do
-  @behaviour WsClient.Frame.FrameType
+  @behaviour WsClient.Frame.ApplicationFrame
 
   defstruct text: ""
 
@@ -91,10 +117,24 @@ defmodule WsClient.Frame.TextFrame do
       fin: true
     }
   end
+
+  def merge(%__MODULE__{text: text}, %WsClient.Frame.ContinuationFrame{data: append}) do
+    %__MODULE__{
+      text: text <> append
+    }
+  end
+
+  def validate(%__MODULE__{text: text}) do
+    case String.printable?(text) do
+      true -> :ok
+      false -> {:error, "invalid UTF8"}
+    end
+  end
+
 end
 
 defmodule WsClient.Frame.DataFrame do
-  @behaviour WsClient.Frame.FrameType
+  @behaviour WsClient.Frame.ApplicationFrame
 
   defstruct data: ""
 
@@ -109,4 +149,12 @@ defmodule WsClient.Frame.DataFrame do
       fin: true
     }
   end
+
+  def merge(%__MODULE__{data: data}, %WsClient.Frame.ContinuationFrame{data: append}) do
+    %__MODULE__{
+      data: data <> append
+    }
+  end
+
+  def validate(_), do: :ok
 end
