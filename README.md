@@ -1,24 +1,26 @@
-# WsClient
+# Tube
 
-**TODO: Add description**
+Pure-Elixir WebSocket client
+
+ * Runs on a supervisable GenServer
+ * Tested with autobahn
 
 ## Installation
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed as:
 
-  1. Add `ws_client` to your list of dependencies in `mix.exs`:
+  1. Add `tube` to your list of dependencies in `mix.exs`:
 
     ```elixir
     def deps do
-      [{:ws_client, "~> 0.1.0"}]
+      [{:tube, "~> 0.1.0"}]
     end
     ```
 
-  2. Ensure `ws_client` is started before your application:
+  2. Ensure `tube` is started before your application:
 
     ```elixir
     def application do
-      [applications: [:ws_client]]
+      [applications: [:tube]]
     end
     ```
-
