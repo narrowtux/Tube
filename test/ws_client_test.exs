@@ -1,6 +1,6 @@
-defmodule WsClientTest do
+defmodule TubeTest do
   use ExUnit.Case
-  doctest WsClient
+  doctest Tube
 
   test "the truth" do
     assert 1 + 1 == 2

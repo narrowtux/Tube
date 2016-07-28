@@ -1,5 +1,5 @@
-alias WsClient.Websocket
-alias WsClient.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame}
+alias Tube.Websocket
+alias Tube.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame}
 
 {:ok, pid} = GenServer.start_link(Websocket, uri: "ws://localhost:4001/ws", opts: [parent: self])
 

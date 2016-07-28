@@ -1,8 +1,32 @@
-defmodule WsClient.Websocket do
-  alias WsClient.Http.{Request, Response}
-  alias WsClient.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame}
-  alias WsClient.Frame
+defmodule Tube.Websocket do
+  alias Tube.Http.{Request, Response}
+  alias Tube.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame}
+  alias Tube.Frame
   use GenServer
+
+  @moduledoc """
+  Represents a WebSocket connection
+
+  This GenServer will handle the whole lifecycle of one WebSocket connection.
+
+  ## Setup
+  ```
+  {:ok, pid} = GenServer.start_link(Tube.Websocket,
+    uri: "ws://localhost:4000/ws",
+    opts: [parent: self])
+  :ok = Tube.Websocket.connect(pid)
+  ```
+
+  This will open a WebSocket connection to `ws://localhost:4000/ws`.
+
+  Incoming frames will be sent via message passing to the pid given in `opts.parent`.
+
+  ## Messages to parent
+
+  * `{:websocket, :frame, frame}`
+  * `{:websocket, :open}`
+  * `{:websocket, :closed}`
+  """
 
   @challenge_token "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
@@ -14,10 +38,11 @@ defmodule WsClient.Websocket do
             incomplete_frame: nil
 
   defmodule Validation do
+    @moduledoc false
     defstruct errors: [], valid?: true
   end
 
-  alias WsClient.Websocket.Validation
+  alias Tube.Websocket.Validation
 
   def init([uri: uri]) do
     init(uri: uri, opts: [])
@@ -29,6 +54,49 @@ defmodule WsClient.Websocket do
     |> Enum.into(%{})
     {:ok, %__MODULE__{uri: URI.parse(uri), state: :closed, frame_types: frame_types, opts: opts, parent: Keyword.get(opts, :parent)}}
   end
+
+  @doc """
+  Connects to the given `uri`
+  """
+  @spec connect(pid) :: :ok
+  def connect(pid) do
+    GenServer.call(pid, :connect)
+  end
+
+  @doc """
+  Changes the uri that will be used the next time `connect/1` is called.
+  """
+  @spec set_uri(pid :: pid, uri :: string) :: :ok
+  def set_uri(pid, uri) do
+    GenServer.call(pid, {:set_uri, uri})
+  end
+
+  @doc """
+  Closes the connection by sending a close frame to the server.
+  """
+  @spec close(pid :: pid) :: :ok
+  def close(pid) do
+    GenServer.cast(pid, :close)
+  end
+
+  @doc """
+  Sends a frame to the server
+  """
+  @spec send_frame(frame :: map, socket :: map) :: :ok
+  def send_frame(%Frame{} = frame, socket) do
+    bin = frame
+    |> Frame.put_mask
+    |> Frame.to_binary
+
+    :ok = :gen_tcp.send(socket, bin)
+  end
+
+  def send_frame(%{__struct__: type} = frame, socket) when type in [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame] do
+    frame
+    |> type.to_frame
+    |> send_frame(socket)
+  end
+
 
   def handle_call({:set_uri, uri}, _from, %__MODULE__{state: :closed} = state) do
     {:reply, :ok, %{state | uri: URI.parse(uri)}}
@@ -75,7 +143,7 @@ defmodule WsClient.Websocket do
         {"Sec-WebSocket-Key", challenge_key |> Base.encode64},
         {:upgrade, "websocket"},
         {:origin, "#{if uri.scheme == "ws" do "http" else "https" end }://#{uri.authority}"},
-        {"User-Agent", "Mozilla/5.0 (Elixir; WsClient)"}
+        {"User-Agent", "Mozilla/5.0 (Elixir; Tube)"}
       ]
     }
 
@@ -124,14 +192,14 @@ defmodule WsClient.Websocket do
     {:noreply, state}
   end
 
-  def put_error(%Validation{} = struct, error) do
+  defp put_error(%Validation{} = struct, error) do
     %{struct |
       valid?: false,
       errors: [error | struct.errors]
     }
   end
 
-  def validate_header(%Validation{} = struct, headers, key, value) do
+  defp validate_header(%Validation{} = struct, headers, key, value) do
     case Map.get(headers, key, "") |> String.downcase do
       "" ->
         put_error(struct, "#{key} not found in headers")
@@ -142,7 +210,7 @@ defmodule WsClient.Websocket do
     end
   end
 
-  def validate_challenge_response(%Validation{} = struct, headers, challenge_key) do
+  defp validate_challenge_response(%Validation{} = struct, headers, challenge_key) do
     expected_challenge_response =
       ((challenge_key |> Base.encode64) <> @challenge_token)
       |> :crypto.sha
@@ -154,11 +222,8 @@ defmodule WsClient.Websocket do
     end
   end
 
-  def close(pid) do
-    GenServer.cast(pid, :close)
-  end
 
-  def fail(pid, reason \\ "") do
+  defp fail(pid, reason \\ "") do
     IO.puts "! ! ! Failing, because: #{reason}"
     close_frame = %CloseFrame{
       status_code: 1002,
@@ -169,20 +234,6 @@ defmodule WsClient.Websocket do
 
     # Force close TCP socket if server doesn't reply in timely fashion
     Process.send_after pid, :force_close, 10000
-  end
-
-  def send_frame(%Frame{} = frame, socket) do
-    bin = frame
-    |> Frame.put_mask
-    |> Frame.to_binary
-
-    :ok = :gen_tcp.send(socket, bin)
-  end
-
-  def send_frame(%{__struct__: type} = frame, socket) when type in [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame] do
-    frame
-    |> type.to_frame
-    |> send_frame(socket)
   end
 
   def handle_cast({:send, %Frame{} = frame}, %__MODULE__{state: :open, socket: socket} = state) do
@@ -222,7 +273,7 @@ defmodule WsClient.Websocket do
     {:noreply, state}
   end
 
-  def handle_frame_msg(msg, %__MODULE__{state: ws_state, frame_types: frame_types, parent: parent, old_tcp_data: previous_msg} = state) do
+  defp handle_frame_msg(msg, %__MODULE__{state: ws_state, frame_types: frame_types, parent: parent, old_tcp_data: previous_msg} = state) do
     msg = previous_msg <> msg
     if byte_size(msg) >= 2 do
       case Frame.parse(msg) do
@@ -275,7 +326,7 @@ defmodule WsClient.Websocket do
               end
               if valid? do
                 send parent, {:websocket, :frame, parsed_frame}
-                WsClient.FrameHandler.handle_frame(parsed_frame, state)
+                Tube.FrameHandler.handle_frame(parsed_frame, state)
               else
                 state
               end
@@ -317,7 +368,7 @@ defmodule WsClient.Websocket do
 
   end
 
-  def clean_state(state) do
+  defp clean_state(state) do
     Map.merge(%__MODULE__{}, Map.drop(state, [
       :state,
       :socket,

@@ -10,11 +10,11 @@ use Mix.Config
 
 # You can configure for your application as:
 #
-#     config :ws_client, key: :value
+#     config :tube, key: :value
 #
 # And access this configuration in your application as:
 #
-#     Application.get_env(:ws_client, :key)
+#     Application.get_env(:tube, :key)
 #
 # Or configure a 3rd-party app:
 #

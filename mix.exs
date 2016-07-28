@@ -1,9 +1,9 @@
-defmodule WsClient.Mixfile do
+defmodule Tube.Mixfile do
   use Mix.Project
 
   def project do
-    [app: :ws_client,
-     version: "0.1.0",
+    [app: :tube,
+     version: "0.1.1",
      description: "WebSocket client library in pure elixir",
      elixir: "~> 1.3",
      build_embedded: Mix.env == :prod,
@@ -36,6 +36,6 @@ defmodule WsClient.Mixfile do
   #
   # Type "mix help deps" for more examples and options
   defp deps do
-    []
+    [{:ex_doc, ">= 0.0.0", only: :dev}]
   end
 end

@@ -1,5 +1,7 @@
-defmodule WsClient.Http.Request do
+defmodule Tube.Http.Request do
   defstruct [uri: nil, headers: [], body: "", method: "GET"]
+
+  @moduledoc false
 
   def to_string(%__MODULE__{} = request) do
     header_fields = request.headers

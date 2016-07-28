@@ -1,5 +1,5 @@
-alias WsClient.Websocket
-alias WsClient.Frame.{TextFrame, DataFrame}
+alias Tube.Websocket
+alias Tube.Frame.{TextFrame, DataFrame}
 
 
 defmodule AutobahnTest do

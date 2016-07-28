@@ -1,7 +1,10 @@
-defmodule WsClient.FrameHandler do
-  alias WsClient.Websocket
-  alias WsClient.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame}
-  alias WsClient.Frame
+defmodule Tube.FrameHandler do
+  alias Tube.Websocket
+  alias Tube.Frame.{PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame}
+  alias Tube.Frame
+
+
+  @moduledoc false
 
   def handle_frame(%CloseFrame{}, %Websocket{initiated_close: close_frame_sent?, socket: socket} = state) do
     if not close_frame_sent? do

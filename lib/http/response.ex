@@ -1,5 +1,7 @@
-defmodule WsClient.Http.Response do
+defmodule Tube.Http.Response do
   defstruct [status: 0, status_text: "None", headers: %{}, body: "", http_version: "1.1"]
+
+  @moduledoc false
 
   def parse(binary) do
     parse_status_line(binary, %__MODULE__{})

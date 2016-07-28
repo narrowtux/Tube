@@ -1,12 +1,14 @@
-alias WsClient.Frame
+alias Tube.Frame
 
-defmodule WsClient.Frame.ControlFrame do
-   @callback parse(payload :: bitstring) :: map
-   @callback to_frame(frame_type :: map) :: %Frame{}
-   @callback opcode() :: integer
+defmodule Tube.Frame.ControlFrame do
+  @moduledoc false
+  @callback parse(payload :: bitstring) :: map
+  @callback to_frame(frame_type :: map) :: %Frame{}
+  @callback opcode() :: integer
 end
 
-defmodule WsClient.Frame.ApplicationFrame do
+defmodule Tube.Frame.ApplicationFrame do
+  @moduledoc false
   @callback parse(payload :: bitstring) :: map
   @callback to_frame(frame_type :: map) :: %Frame{}
   @callback opcode() :: integer
@@ -14,8 +16,14 @@ defmodule WsClient.Frame.ApplicationFrame do
   @callback validate(frame :: map) :: :ok | {:error, reason :: string}
 end
 
-defmodule WsClient.Frame.ContinuationFrame do
-  @behaviour WsClient.Frame.ControlFrame
+defmodule Tube.Frame.ContinuationFrame do
+  @behaviour Tube.Frame.ControlFrame
+
+  @moduledoc """
+  Represents a continuation frame.
+
+  Continuation frames contain a `payload`.
+  """
 
   defstruct data: ""
 
@@ -32,8 +40,15 @@ defmodule WsClient.Frame.ContinuationFrame do
   end
 end
 
-defmodule WsClient.Frame.PingFrame do
-  @behaviour WsClient.Frame.ControlFrame
+defmodule Tube.Frame.PingFrame do
+  @behaviour Tube.Frame.ControlFrame
+
+  @moduledoc """
+  Represents a ping frame
+
+  Ping frames can contain a `payload` whose interpretation is up to the
+  application
+  """
 
   defstruct [application_data: ""]
 
@@ -52,8 +67,15 @@ defmodule WsClient.Frame.PingFrame do
   end
 end
 
-defmodule WsClient.Frame.PongFrame do
-  @behaviour WsClient.Frame.ControlFrame
+defmodule Tube.Frame.PongFrame do
+  @behaviour Tube.Frame.ControlFrame
+
+  @moduledoc """
+  Represents a pong frame
+
+  Pong frames can contain a `payload` whose interpretation is up to the
+  application
+  """
 
   defstruct [application_data: ""]
 
@@ -72,8 +94,14 @@ defmodule WsClient.Frame.PongFrame do
   end
 end
 
-defmodule WsClient.Frame.CloseFrame do
-  @behaviour WsClient.Frame.ControlFrame
+defmodule Tube.Frame.CloseFrame do
+  @behaviour Tube.Frame.ControlFrame
+
+  @moduledoc """
+  Represents a close frame
+
+  Close frames can contain a `status_code` (integer) and a `reason` (string).
+  """
 
   defstruct [status_code: 1000, reason: ""]
 
@@ -101,8 +129,14 @@ defmodule WsClient.Frame.CloseFrame do
   end
 end
 
-defmodule WsClient.Frame.TextFrame do
-  @behaviour WsClient.Frame.ApplicationFrame
+defmodule Tube.Frame.TextFrame do
+  @behaviour Tube.Frame.ApplicationFrame
+
+  @moduledoc """
+  Represents a text frame
+
+  Ping frames contain a `text` which is a string
+  """
 
   defstruct text: ""
 
@@ -118,7 +152,7 @@ defmodule WsClient.Frame.TextFrame do
     }
   end
 
-  def merge(%__MODULE__{text: text}, %WsClient.Frame.ContinuationFrame{data: append}) do
+  def merge(%__MODULE__{text: text}, %Tube.Frame.ContinuationFrame{data: append}) do
     %__MODULE__{
       text: text <> append
     }
@@ -133,8 +167,14 @@ defmodule WsClient.Frame.TextFrame do
 
 end
 
-defmodule WsClient.Frame.DataFrame do
-  @behaviour WsClient.Frame.ApplicationFrame
+defmodule Tube.Frame.DataFrame do
+  @behaviour Tube.Frame.ApplicationFrame
+
+  @moduledoc """
+  Represents a data frame
+
+  Ping frames contain `data` which is a binary
+  """
 
   defstruct data: ""
 
@@ -150,7 +190,7 @@ defmodule WsClient.Frame.DataFrame do
     }
   end
 
-  def merge(%__MODULE__{data: data}, %WsClient.Frame.ContinuationFrame{data: append}) do
+  def merge(%__MODULE__{data: data}, %Tube.Frame.ContinuationFrame{data: append}) do
     %__MODULE__{
       data: data <> append
     }

@@ -1,7 +1,74 @@
-defmodule WsClient.Frame do
+defmodule Tube.Frame do
   use Bitwise
+
+  @moduledoc """
+  Represents a full frame of the WebSocket protocol
+
+  ## Struct
+
+  ### `fin`
+  Indicates that this is the final fragment in a message.  The first
+  fragment MAY also be the final fragment.
+
+  ### `opcode`
+  Defines the interpretation of the "Payload data".  If an unknown
+  opcode is received, the receiving endpoint MUST _Fail the
+  WebSocket Connection_.  The following values are defined.
+  *  0x0 denotes a continuation frame
+  *  0x1 denotes a text frame
+  *  0x2 denotes a binary frame
+  *  0x3-7 are reserved for further non-control frames
+  *  0x8 denotes a connection close
+  *  0x9 denotes a ping
+  *  0xA denotes a pong
+  *  0xB-F are reserved for further control frames
+
+  ### `mask` and `mask_key`
+  If mask is true, the `mask_key` will be a 4 byte long key. This will be used
+  to unmask the payload data from client to server.
+
+  ### `len`
+  Length of the payload
+
+  ### `payload`
+  Binary of the frame's application data
+
+  ### `control_frame?`
+  If true, this frame's opcode means that this is a control frame.
+
+  Control frames can be interleaved into fragmented messages.
+  """
+
   defstruct [fin: true, opcode: 0, mask: false, len: 0, mask_key: "", payload: <<>>, control_frame?: false]
 
+
+  @doc """
+  Parses the given `binary` into a `%Tube.Frame{}` struct.
+
+  ## Example
+
+  ```
+  iex(1)> Tube.Frame.parse(<<129, 139, 71, 28, 66, 60, 15, 121, 46, 80, 40, 60, 21, 83, 53, 112, 38>>)
+  {:ok,
+   %Tube.Frame{control_frame?: false, fin: true, len: 11, mask: 1,
+    mask_key: <<71, 28, 66, 60>>, opcode: 1, payload: "Hello World"}, ""}
+  ```
+
+  ## Returns
+  When parsed with no issues, it will return
+
+  `{:ok, %Tube.Frame{}, rest}`
+
+  `rest` will contain superflous bytes that are not part of the frame and should
+  be kept until more TCP chops arrive.
+
+  If there was an error,
+
+  `{:error, reson}`
+
+  will be returned
+  """
+  @spec parse(binary) :: {:ok, struct(), binary} | {:error, term}
   def parse(binary) when is_binary(binary) when byte_size(binary) >= 2 do
      case binary do
        <<fin::size(1),
@@ -78,6 +145,12 @@ defmodule WsClient.Frame do
 
   def parse(_), do: {:error, :incomplete_header}
 
+  @doc """
+  Applies the mask to the given payload.
+
+  This can be done to either mask or unmask the payload.
+  """
+  @spec mask_payload(binary, binary) :: binary
   def mask_payload(payload, mask_key) do
     <<a::integer-size(8), b::integer-size(8), c::integer-size(8), d::integer-size(8)>> = mask_key
      __mask_payload(payload, [a, b, c, d], 0, "")
@@ -91,6 +164,12 @@ defmodule WsClient.Frame do
     __mask_payload(rest, mask_key, i + 1, masked <> <<first::integer-size(8)>>)
   end
 
+  @doc """
+  Converts the #{__MODULE__} struct to a binary.
+
+  If the given frame has a `mask_key`, it will apply this key.
+  """
+  @spec to_binary(struct()) :: binary
   def to_binary(%__MODULE__{} = struct) do
     struct = %{struct | mask: struct.mask_key != ""}
 
@@ -122,6 +201,11 @@ defmodule WsClient.Frame do
        payload::binary-size(payload_size) >>
   end
 
+  @doc """
+  Generates a random mask using `:crypto.strong_rand_bytes/1` and adds it to the
+  given frame
+  """
+  @spec put_mask(struct()) :: struct()
   def put_mask(%__MODULE__{} = struct) do
     mask = :crypto.strong_rand_bytes(4)
     %{struct |
