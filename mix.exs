@@ -4,10 +4,19 @@ defmodule WsClient.Mixfile do
   def project do
     [app: :ws_client,
      version: "0.1.0",
+     description: "WebSocket client library in pure elixir",
      elixir: "~> 1.3",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
-     deps: deps()]
+     deps: deps(),
+     package: [
+       name: :tube,
+       files: ["lib", "examples", "README*", "LICENSE*"],
+       licenses: ["MIT"],
+       links: %{"GitHub" => "https://github.com/narrowtux/Tube"},
+       maintainers: ["Moritz Schmale"],
+       build_tools: ["mix"]
+     ]]
   end
 
   # Configuration for the OTP application
