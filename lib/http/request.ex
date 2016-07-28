@@ -5,7 +5,7 @@ defmodule WsClient.Http.Request do
     header_fields = request.headers
     |> Enum.map(fn
     {key, value} when is_binary(key) ->
-      "#{key |> String.capitalize}: #{value}"
+      "#{key}: #{value}"
     {key, value} when is_atom(key) ->
       "#{key |> Atom.to_string |> String.capitalize}: #{value}"
     end)

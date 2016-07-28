@@ -34,38 +34,48 @@ defmodule WsClient.Websocket do
     {:reply, :ok, %{state | uri: URI.parse(uri)}}
   end
 
-  def handle_call(:connect, _from, %__MODULE__{state: :closed} = state) do
+  def handle_call(:connect, _from, %__MODULE__{state: :closed, uri: uri} = state) do
 
-    ip = {127,0,0,1} #TODO: DNS resolve
-    case :gen_tcp.connect(ip,
-        state.uri.port,
-        [:binary, active: true]) do
-      {:ok, socket} ->
-        state = %{state |
-          socket: socket,
-          state: :connecting
-        }
-        {:ok, state} = do_handshake(state)
-        {:reply, :ok, state}
-      {:error, reason} ->
-        IO.puts "Error while connecting #{inspect reason}"
-        {:reply, {:error, reason}, state}
+    case :inet.getaddr(uri.host |> String.to_charlist, :inet) do
+      {:ok, ip} ->
+        case :gen_tcp.connect(ip,
+            state.uri.port,
+            [:binary, active: true]) do
+          {:ok, socket} ->
+            state = %{state |
+              socket: socket,
+              state: :connecting
+            }
+            {:ok, state} = do_handshake(state)
+            {:reply, :ok, state}
+          {:error, reason} ->
+            IO.puts "Error while connecting #{inspect reason}"
+            {:reply, {:error, reason}, state}
+        end
+      {:error, error} ->
+        {:reply, {:error, :dns, error}, state}
     end
+
   end
 
   defp do_handshake(%__MODULE__{uri: uri, socket: socket, state: :connecting} = state) do
     challenge_key = :crypto.strong_rand_bytes(16)
     request = %Request{
-      uri: uri,
+      uri: %{uri | scheme: case uri.scheme do
+        "ws" -> "http"
+        "wss" -> "https"
+        _ -> uri.scheme
+      end},
       method: "GET",
       body: "",
       headers: [
-        host: uri.authority,
-        connection: "Upgrade",
-        upgrade: "websocket",
-        "Sec-WebSocket-Version": 13,
-        "User-Agent": "Mozilla/5.0 (Elixir; WsClient)",
-        "Sec-WebSocket-Key": challenge_key |> Base.encode64
+        {:host, uri.authority},
+        {:connection, "Upgrade"},
+        {"Sec-WebSocket-Version", 13},
+        {"Sec-WebSocket-Key", challenge_key |> Base.encode64},
+        {:upgrade, "websocket"},
+        {:origin, "#{if uri.scheme == "ws" do "http" else "https" end }://#{uri.authority}"},
+        {"User-Agent", "Mozilla/5.0 (Elixir; WsClient)"}
       ]
     }
 
@@ -101,12 +111,12 @@ defmodule WsClient.Websocket do
           %{state | state: :open}
         else
           IO.warn "Response not valid: #{inspect validation.errors}"
-          close self
+          #close self
           state
         end
       _ ->
         IO.warn("Unexpected response #{inspect msg}")
-        close self #TODO terminate?
+        #close self #TODO terminate?
         state
     end
 
