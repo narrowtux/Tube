@@ -29,7 +29,7 @@ defmodule Tube.Frame.ContinuationFrame do
 
   def opcode, do: 0x0
 
-  def parse(data), do: %__MODULE__{data: data}
+  def parse(data), do: {:ok, %__MODULE__{data: data}}
 
   def to_frame(%__MODULE__{data: data}) do
     %Frame{
@@ -55,7 +55,7 @@ defmodule Tube.Frame.PingFrame do
   def opcode, do: 0x9
 
   def parse(payload) do
-    %__MODULE__{application_data: payload}
+    {:ok, %__MODULE__{application_data: payload}}
   end
 
   def to_frame(%__MODULE__{} = ping_frame) do
@@ -82,7 +82,7 @@ defmodule Tube.Frame.PongFrame do
   def opcode, do: 0xA
 
   def parse(payload) do
-    %__MODULE__{application_data: payload}
+    {:ok, %__MODULE__{application_data: payload}}
   end
 
   def to_frame(%__MODULE__{} = pong_frame) do
@@ -108,15 +108,23 @@ defmodule Tube.Frame.CloseFrame do
   def opcode, do: 0x8
 
   def parse("") do
-    %__MODULE__{}
+    {:ok, %__MODULE__{}}
   end
 
   def parse(<<status_code::integer-size(16), reason::binary>>) do
-    %__MODULE__{
-      status_code: status_code,
-      reason: reason
-    }
+    case String.printable?(reason) do
+      true ->
+        {:ok, %__MODULE__{
+          status_code: status_code,
+          reason: reason
+        }}
+      false ->
+        {:error, "Invalid UTF8"}
+    end
+
   end
+
+  def parse(_), do: {:error, "Invalid payload"}
 
   def to_frame(%__MODULE__{} = close_frame) do
     payload = <<close_frame.status_code::integer-size(16),
@@ -142,7 +150,7 @@ defmodule Tube.Frame.TextFrame do
 
   def opcode, do: 0x1
 
-  def parse(text), do: %__MODULE__{text: text}
+  def parse(text), do: {:ok, %__MODULE__{text: text}}
 
   def to_frame(%__MODULE__{text: text}) do
     %Frame{
@@ -180,7 +188,7 @@ defmodule Tube.Frame.DataFrame do
 
   def opcode, do: 0x2
 
-  def parse(data), do: %__MODULE__{data: data}
+  def parse(data), do: {:ok, %__MODULE__{data: data}}
 
   def to_frame(%__MODULE__{data: data}) do
     %Frame{

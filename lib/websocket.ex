@@ -283,7 +283,13 @@ defmodule Tube.Websocket do
               fail self, "Unknown opcode"
               nil
             frame_type ->
-              frame_type.parse(frame.payload)
+              case frame_type.parse(frame.payload) do
+                {:ok, parsed_frame} ->
+                  parsed_frame
+                {:error, error} ->
+                  fail(self, error)
+                  nil
+              end
           end
           state = if parsed_frame do
             {state, parsed_frame} = case {parsed_frame, frame, state.incomplete_frame} do
