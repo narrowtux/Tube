@@ -52,7 +52,7 @@ defmodule Tube.Websocket do
     frame_types = [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame]
     |> Enum.map(fn (type) -> {type.opcode, type} end)
     |> Enum.into(%{})
-    {:ok, %__MODULE__{uri: URI.parse(uri), state: :closed, frame_types: frame_types, opts: opts, parent: Keyword.get(opts, :parent)}}
+    {:ok, %__MODULE__{uri: parse_uri(uri), state: :closed, frame_types: frame_types, opts: opts, parent: Keyword.get(opts, :parent)}}
   end
 
   @doc """
@@ -88,7 +88,7 @@ defmodule Tube.Websocket do
     |> Frame.put_mask
     |> Frame.to_binary
 
-    :ok = :gen_tcp.send(socket, bin)
+    :ok = socket_send(socket, bin)
   end
 
   def send_frame(%{__struct__: type} = frame, socket) when type in [PingFrame, PongFrame, CloseFrame, TextFrame, DataFrame, ContinuationFrame] do
@@ -99,7 +99,24 @@ defmodule Tube.Websocket do
 
 
   def handle_call({:set_uri, uri}, _from, %__MODULE__{state: :closed} = state) do
-    {:reply, :ok, %{state | uri: URI.parse(uri)}}
+    {:reply, :ok, %{state | uri: parse_uri(uri)}}
+  end
+
+  defp parse_uri(uri) do
+    uri = uri
+    |> URI.parse
+
+    port = case uri.port do
+      nil ->
+        case uri.scheme do
+          "ws" -> 80
+          "wss" -> 443
+          _ -> nil
+        end
+      port -> port
+    end
+
+    %{uri | port: port}
   end
 
   def handle_call(:connect, _from, %__MODULE__{state: :closed, uri: uri} = state) do
@@ -110,6 +127,12 @@ defmodule Tube.Websocket do
             state.uri.port,
             [:binary, active: true]) do
           {:ok, socket} ->
+            {:ok, socket} = case uri.scheme do
+              "ws" -> socket
+              "wss" ->
+                :ssl.start
+                :ssl.connect(socket, [])
+            end
             state = %{state |
               socket: socket,
               state: :connecting
@@ -124,6 +147,14 @@ defmodule Tube.Websocket do
         {:reply, {:error, :dns, error}, state}
     end
 
+  end
+
+  def socket_send({:sslsocket, _, _} = socket, message) do
+    :ssl.send(socket, message)
+  end
+
+  def socket_send(socket, message) do
+    :gen_tcp.send(socket, message)
   end
 
   defp do_handshake(%__MODULE__{uri: uri, socket: socket, state: :connecting} = state) do
@@ -149,7 +180,7 @@ defmodule Tube.Websocket do
 
     bin = request |> Request.to_string
 
-    :gen_tcp.send(socket, bin)
+    socket_send(socket, bin)
     state = state
     |> Map.put(:state, :handshake)
     |> Map.put(:challenge_key, challenge_key)
@@ -158,6 +189,14 @@ defmodule Tube.Websocket do
 
   # Handshake response handling
   def handle_info({:tcp, _port, msg}, %__MODULE__{state: :handshake, challenge_key: challenge_key, parent: parent} = state) when msg != "" do
+    handle_handshake_response(msg, state)
+  end
+
+  def handle_info({:ssl, _port, msg}, %__MODULE__{state: :handshake, challenge_key: challenge_key, parent: parent} = state) when msg != "" do
+    handle_handshake_response(msg, state)
+  end
+
+  defp handle_handshake_response(msg, %__MODULE__{state: :handshake, challenge_key: challenge_key, parent: parent} = state) do
     msg = msg |> Response.parse
     state = case msg do
       {%Response{
@@ -363,12 +402,17 @@ defmodule Tube.Websocket do
     end
   end
 
+  def handle_info({:ssl, _port, msg}, %__MODULE__{state: ws_state, frame_types: frame_types, parent: parent, old_tcp_data: previous_msg} = state) when ws_state in [:open, :closing] do
+    {:noreply, handle_frame_msg(msg, state)}
+  end
 
   def handle_info({:tcp, port, msg}, %__MODULE__{state: ws_state, frame_types: frame_types, parent: parent, old_tcp_data: previous_msg} = state) when ws_state in [:open, :closing] do
     {:noreply, handle_frame_msg(msg, state)}
   end
 
   def handle_info({:tcp, _port, ""}, state), do: {:noreply, state}
+
+  def handle_info({:ssl, _port, ""}, state), do: {:noreply, state}
 
   def handle_cast(:schedule_ping, %__MODULE__{next_ping_timer: timer, opts: opts}) do
 
