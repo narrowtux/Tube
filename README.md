@@ -11,16 +11,16 @@ If [available in Hex](https://hex.pm/docs/publish), the package can be installed
 
   1. Add `tube` to your list of dependencies in `mix.exs`:
 
-    ```elixir
+```elixir
     def deps do
       [{:tube, "~> 0.1.0"}]
     end
-    ```
+```
 
   2. Ensure `tube` is started before your application:
 
-    ```elixir
+```elixir
     def application do
       [applications: [:tube]]
     end
-    ```
+```
